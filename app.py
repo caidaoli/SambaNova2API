@@ -12,7 +12,7 @@ import secrets
 import urllib.parse
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, Request, HTTPException, Depends, Header
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fake_useragent import UserAgent
 # 修复 Pydantic 导入
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     LOCAL_API_KEY: str = os.getenv("LOCAL_API_KEY", secrets.token_urlsafe(32))
     
     # 其他配置
-    TOKEN_CACHE_TIME: int = int(os.getenv("TOKEN_CACHE_TIME", 3600))  # 默认缓存1小时
+    TOKEN_CACHE_TIME: int = int(os.getenv("TOKEN_CACHE_TIME", 604800))  # 默认缓存7天 (7*24*60*60=604800秒)
     FINGERPRINT_PREFIX: str = os.getenv("FINGERPRINT_PREFIX", "anon_")
     
     class Config:
@@ -292,6 +292,135 @@ async def debug_token():
         "current_time": current_time,
         "expiry_time": token_expiry,
     }
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """根路由健康检查，返回HTML界面"""
+    current_time = time.time()
+    token_valid = access_token is not None and current_time < token_expiry
+    expires_in = max(0, int(token_expiry - current_time)) if access_token else 0
+    
+    # 计算过期时间的可读格式
+    if expires_in > 0:
+        days = expires_in // 86400
+        hours = (expires_in % 86400) // 3600
+        minutes = (expires_in % 3600) // 60
+        expiry_readable = f"{days}天 {hours}小时 {minutes}分钟"
+    else:
+        expiry_readable = "已过期"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SambaNova OpenAI 代理服务</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            h1 {{
+                color: #2c3e50;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 10px;
+            }}
+            .status-card {{
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .status-item {{
+                margin-bottom: 10px;
+                display: flex;
+                justify-content: space-between;
+            }}
+            .status-label {{
+                font-weight: bold;
+                color: #555;
+            }}
+            .status-value {{
+                text-align: right;
+            }}
+            .status-healthy {{
+                color: #28a745;
+                font-weight: bold;
+            }}
+            .status-warning {{
+                color: #ffc107;
+                font-weight: bold;
+            }}
+            .status-error {{
+                color: #dc3545;
+                font-weight: bold;
+            }}
+            .code-block {{
+                background-color: #f1f1f1;
+                padding: 15px;
+                border-radius: 5px;
+                font-family: monospace;
+                overflow-x: auto;
+            }}
+            .footer {{
+                margin-top: 30px;
+                font-size: 0.9em;
+                color: #6c757d;
+                text-align: center;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>SambaNova OpenAI 代理服务</h1>
+        
+        <div class="status-card">
+            <h2>服务状态</h2>
+            <div class="status-item">
+                <span class="status-label">状态:</span>
+                <span class="status-value status-healthy">运行中</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">版本:</span>
+                <span class="status-value">1.0.0</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">令牌状态:</span>
+                <span class="status-value {('status-healthy' if token_valid else 'status-error')}">
+                    {('有效' if token_valid else '无效')}
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">令牌过期时间:</span>
+                <span class="status-value">{expiry_readable}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">SambaNova 凭据:</span>
+                <span class="status-value {('status-healthy' if settings.SAMBA_EMAIL and settings.SAMBA_PASSWORD else 'status-error')}">
+                    {('已配置' if settings.SAMBA_EMAIL and settings.SAMBA_PASSWORD else '未配置')}
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">本地API密钥:</span>
+                <span class="status-value {('status-healthy' if settings.LOCAL_API_KEY else 'status-warning')}">
+                    {('已配置' if settings.LOCAL_API_KEY else '未配置')}
+                </span>
+            </div>
+        </div>
+                
+        <div class="footer">
+            <p>当前时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html_content
 
 class SambaAuthAsync:
     def __init__(self, email, password):
