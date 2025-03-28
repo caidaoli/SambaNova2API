@@ -309,6 +309,16 @@ async def root():
     else:
         expiry_readable = "已过期"
     
+    # 使用东八区时间（中国标准时间）
+    import datetime
+    from datetime import timezone, timedelta
+    
+    # 创建东八区时区对象
+    china_tz = timezone(timedelta(hours=8))
+    # 获取当前UTC时间并转换为东八区时间
+    current_time_china = datetime.datetime.now(china_tz)
+    formatted_time = current_time_china.strftime('%Y-%m-%d %H:%M:%S')
+    
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -414,7 +424,7 @@ async def root():
         </div>
                 
         <div class="footer">
-            <p>当前时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}</p>
+            <p>当前时间: {formatted_time} (中国标准时间)</p>
         </div>
     </body>
     </html>
