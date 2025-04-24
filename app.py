@@ -38,8 +38,15 @@ class Settings(BaseSettings):
     TOKEN_CACHE_TIME: int = int(os.getenv("TOKEN_CACHE_TIME", 604800))  # 默认缓存7天 (7*24*60*60=604800秒)
     FINGERPRINT_PREFIX: str = os.getenv("FINGERPRINT_PREFIX", "anon_")
     
+    # 添加缺少的字段
+    domain: str = os.getenv("domain", "")
+    temp_mail: str = os.getenv("temp_mail", "")
+    temp_mail_ext: str = os.getenv("temp_mail_ext", "")
+    rate_limit_wait: int = int(os.getenv("rate_limit_wait", 3600))
+    
     class Config:
         env_file = ".env"
+        extra = "ignore"  # 忽略额外的字段，避免类似错误
 
 settings = Settings()
 # =====================================
@@ -551,37 +558,44 @@ class SambaAuthAsync:
         finally:
             await self.client.aclose()
 
+# 定义后台任务刷新令牌
+async def token_refresh_task():
+    global token_expiry, access_token
+    
+    while True:
+        # 如果没有令牌或过期时间未设置，先获取一次
+        if not access_token or token_expiry == 0:
+            await get_samba_token()
+            if not access_token:
+                # 如果获取失败，等待一段时间后重试
+                await asyncio.sleep(60)
+                continue
+        
+        # 计算距离过期还有多少时间（秒）
+        remaining_time = token_expiry - time.time()
+        
+        if remaining_time <= 0:
+            # 如果已过期，立即刷新
+            print("[后台任务] 令牌已过期，立即刷新")
+            await get_samba_token()
+        else:
+            # 设置为过期前3分钟刷新
+            refresh_before = min(remaining_time - 180, 3600)  # 提前3分钟，但最长等待1小时
+            refresh_before = max(refresh_before, 0)  # 确保不会是负数
+            
+            print(f"[后台任务] 令牌将在 {int(remaining_time)} 秒后过期，计划在 {int(refresh_before)} 秒后刷新")
+            await asyncio.sleep(refresh_before)
+            
+            # 刷新令牌
+            print("[后台任务] 开始自动刷新令牌")
+            await get_samba_token()
+
+# 在应用启动时启动后台任务
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时预获取令牌"""
-    print("\n" + "="*50)
-    print("[启动] SambaNova OpenAI 代理服务启动")
-    print("="*50)
-    
-    # 检查环境变量
-    print(f"[环境] SAMBA_EMAIL: {'已设置' if settings.SAMBA_EMAIL else '未设置'}")
-    print(f"[环境] SAMBA_PASSWORD: {'已设置' if settings.SAMBA_PASSWORD else '未设置'}")
-    print(f"[环境] LOCAL_API_KEY: {'已设置' if settings.LOCAL_API_KEY else '未设置'}")
-    
-    # 尝试直接登录
-    print("[登录] 开始尝试登录...")
-    try:
-        auth = SambaAuthAsync(settings.SAMBA_EMAIL, settings.SAMBA_PASSWORD)
-        token = await auth.login()
-        
-        if token:
-            global access_token, token_expiry
-            access_token = token
-            token_expiry = time.time() + settings.TOKEN_CACHE_TIME
-            print(f"[登录] 登录成功! 令牌: {token}")
-            print(f"[登录] 令牌将在 {settings.TOKEN_CACHE_TIME} 秒后过期")
-        else:
-            print("[登录] 登录失败，未获取到令牌")
-    except Exception as e:
-        print(f"[登录] 登录过程发生异常: {str(e)}")
-    
-    print("="*50 + "\n")
+    asyncio.create_task(token_refresh_task())
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860) 
+
