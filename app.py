@@ -169,44 +169,6 @@ async def forward_get_request(url: str, token: str) -> httpx.Response:
                 raise HTTPException(401, "Token expired, please retry")
             raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text}")
 
-async def forward_post_request(url: str, payload: dict, token: str) -> httpx.Response:
-    """转发 POST 请求到目标接口"""
-    headers = {
-        "content-type": "application/json",
-        "user-agent": "SambaNova-Proxy/1.0",
-        "origin": "https://cloud.sambanova.ai",
-        "referer": "https://cloud.sambanova.ai/"
-    }
-    
-    cookies = {
-        "access_token": token
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers=headers,
-                cookies=cookies,
-                timeout=30.0
-            )
-            
-            # 检查是否需要刷新令牌
-            if resp.status_code == 401:
-                # 令牌已过期，需要刷新
-                reset_token_expiry()
-                raise HTTPException(401, "Token expired, please retry")
-                
-            resp.raise_for_status()
-            return resp
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                # 令牌已过期，需要刷新
-                reset_token_expiry()
-                raise HTTPException(401, "Token expired, please retry")
-            raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text}")
-
 @app.get("/v1/models")
 async def list_models(token: str = Depends(validate_api_key)):
     """透传模型列表接口"""
@@ -233,45 +195,108 @@ async def chat_completions(
     request: Request,
     token: str = Depends(validate_api_key)
 ):
-    """处理对话请求"""
+    """
+    处理对话请求，并根据客户端要求支持流式或非流式响应。
+    """
+    openai_payload = await request.json()
+    is_stream = openai_payload.get("stream", False)
+    print(f"[请求] 收到聊天请求，模型: {openai_payload.get('model', 'DeepSeek-R1')}, 流式: {is_stream}")
+
+    # 始终向上游请求流式响应，以便在代理端进行控制
+    samba_payload = {
+        "body": {
+            "model": openai_payload.get("model", "DeepSeek-R1"),
+            "messages": openai_payload["messages"],
+            "stream": True,
+            "stop": openai_payload.get("stop", ["<|eot_id|>"]),
+            "temperature": openai_payload.get("temperature", 0),
+            "max_tokens": openai_payload.get("max_tokens", 2048),
+            "do_sample": openai_payload.get("temperature", 0) > 0
+        },
+        "env_type": "text",
+        "fingerprint": generate_fingerprint()
+    }
+
+    headers = {
+        "content-type": "application/json",
+        "user-agent": "SambaNova-Proxy/1.4-FixNonStream",
+        "origin": "https://cloud.sambanova.ai",
+        "referer": "https://cloud.sambanova.ai/"
+    }
+    cookies = {"access_token": token}
+
+    client = httpx.AsyncClient(timeout=60.0)
+    
     try:
-        openai_payload = await request.json()
-        print(f"[请求] 收到聊天请求，模型: {openai_payload.get('model', 'DeepSeek-R1')}")
-        
-        samba_payload = {
-            "body": {
+        req = client.build_request("POST", settings.SAMBA_COMPLETION_URL, json=samba_payload, headers=headers, cookies=cookies)
+        resp = await client.send(req, stream=True)
+
+        if resp.status_code == 401:
+            reset_token_expiry()
+            raise HTTPException(401, "Token expired, please retry")
+
+        print(f"[响应] 上游响应状态码: {resp.status_code}")
+        print(f"[响应] 上游响应头: {resp.headers}")
+        resp.raise_for_status()
+
+        if is_stream:
+            print("[模式] 客户端请求流式响应，直接代理。")
+            media_type = resp.headers.get("content-type", "text/event-stream")
+
+            async def content_streamer(response, http_client):
+                try:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                finally:
+                    await response.aclose()
+                    await http_client.aclose()
+                    print("[流关闭] 上游连接已关闭。")
+            
+            return StreamingResponse(content_streamer(resp, client), status_code=resp.status_code, media_type=media_type, headers={"X-Proxy-Version": "1.4-FixNonStream"})
+        else:
+            print("[模式] 客户端请求非流式响应，聚合结果。")
+            full_text = ""
+            try:
+                async for chunk in resp.aiter_bytes():
+                    lines = chunk.decode('utf-8').splitlines()
+                    for line in lines:
+                        if line.startswith("data:"):
+                            try:
+                                data_str = line[len("data:"):].strip()
+                                if data_str and data_str != "[DONE]":
+                                    json_data = json.loads(data_str)
+                                    # 从标准OpenAI兼容结构中提取内容
+                                    choices = json_data.get("choices")
+                                    if choices and isinstance(choices, list) and len(choices) > 0:
+                                        delta = choices[0].get("delta")
+                                        if delta and isinstance(delta, dict):
+                                            content_part = delta.get("content")
+                                            if content_part and isinstance(content_part, str):
+                                                full_text += content_part
+                            except json.JSONDecodeError:
+                                print(f"[警告] 无法解析聚合流中的JSON行: {line}")
+            finally:
+                await resp.aclose()
+                await client.aclose()
+                print("[连接清理] 非流式请求处理完毕，连接已关闭。")
+
+            openai_response = {
+                "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
                 "model": openai_payload.get("model", "DeepSeek-R1"),
-                "messages": openai_payload["messages"],
-                "stream": True,
-                "stop": openai_payload.get("stop", ["<|eot_id|>"]),
-                "temperature": openai_payload.get("temperature", 0),
-                "max_tokens": openai_payload.get("max_tokens", 2048),
-                "do_sample": openai_payload.get("temperature", 0) > 0
-            },
-            "env_type": "text",
-            "fingerprint": generate_fingerprint()
-        }
-        
-        print(f"[转发] 使用令牌 {token[:10]}... 转发请求到 SambaNova")
-        resp = await forward_post_request(settings.SAMBA_COMPLETION_URL, samba_payload, token)
-        print(f"[响应] 成功获取响应，开始流式传输")
-        
-        return StreamingResponse(
-            resp.aiter_bytes(),
-            media_type="text/event-stream",
-            headers={
-                "X-Proxy-Version": "1.0",
-                "X-Request-ID": str(uuid.uuid4())
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": full_text.strip()}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": -1, "completion_tokens": -1, "total_tokens": -1}
             }
-        )
-    except HTTPException as e:
-        print(f"[错误] HTTP异常: {e.detail}")
-        raise
-    except httpx.RequestError as e:
-        print(f"[错误] 请求错误: {str(e)}")
-        raise HTTPException(504, f"Gateway timeout: {str(e)}")
+            return JSONResponse(content=openai_response)
+
+    except httpx.HTTPStatusError as e:
+        print(f"[错误] 上游HTTP状态错误: {e}")
+        if 'resp' in locals() and resp and not resp.is_closed: await resp.aclose()
+        if client and not client.is_closed: await client.aclose()
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
-        print(f"[错误] 未处理异常: {str(e)}")
+        print(f"[错误] 未处理异常: {e}")
+        if 'resp' in locals() and resp and not resp.is_closed: await resp.aclose()
+        if client and not client.is_closed: await client.aclose()
         raise HTTPException(500, f"Internal server error: {str(e)}")
 
 @app.get("/info")
