@@ -11,6 +11,7 @@ import httpx
 import secrets
 import urllib.parse
 from typing import Optional, Dict, Any
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -51,7 +52,26 @@ class Settings(BaseSettings):
 settings = Settings()
 # =====================================
 
-app = FastAPI(title="SambaNova OpenAI Proxy with Auto-Login")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    应用生命周期管理器：在应用启动时启动后台令牌刷新任务。
+    """
+    # 应用启动时执行
+    task = asyncio.create_task(token_refresh_task())
+    print("[生命周期] 应用启动，开始后台令牌刷新任务...")
+    yield
+    # 应用关闭时执行 (如果需要)
+    print("[生命周期] 应用关闭，正在取消后台任务...")
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("[生命周期] 后台任务成功取消。")
+
+
+app = FastAPI(title="SambaNova OpenAI Proxy with Auto-Login", lifespan=lifespan)
 security = HTTPBearer()
 
 # 全局变量存储访问令牌和过期时间
@@ -151,7 +171,7 @@ async def forward_get_request(url: str, token: str) -> httpx.Response:
                 url,
                 headers=headers,
                 cookies=cookies,
-                timeout=10.0
+                timeout=600.0
             )
             
             # 检查是否需要刷新令牌
@@ -210,7 +230,7 @@ async def chat_completions(
             "stream": True,
             "stop": openai_payload.get("stop", ["<|eot_id|>"]),
             "temperature": openai_payload.get("temperature", 0),
-            "max_tokens": openai_payload.get("max_tokens", 2048),
+            "max_tokens": openai_payload.get("max_tokens", 7168),
             "do_sample": openai_payload.get("temperature", 0) > 0
         },
         "env_type": "text",
@@ -225,7 +245,7 @@ async def chat_completions(
     }
     cookies = {"access_token": token}
 
-    client = httpx.AsyncClient(timeout=60.0)
+    client = httpx.AsyncClient(timeout=600.0)
     
     try:
         req = client.build_request("POST", settings.SAMBA_COMPLETION_URL, json=samba_payload, headers=headers, cookies=cookies)
@@ -615,10 +635,6 @@ async def token_refresh_task():
             print("[后台任务] 开始自动刷新令牌")
             await get_samba_token()
 
-# 在应用启动时启动后台任务
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(token_refresh_task())
 
 if __name__ == "__main__":
     import uvicorn
