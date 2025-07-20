@@ -37,7 +37,49 @@ SAMBA_MODELS_URL=https://api.sambanova.ai/v1/models
 
 ### Docker Deployment
 
-Run with Docker:
+#### Using Pre-built Image (Recommended)
+
+Pull and run the latest image from GitHub Container Registry:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/caidaoli/sambanovo2api:latest
+
+# Run with environment variables
+docker run -d \
+  --name sambanova-proxy \
+  -p 6666:8000 \
+  -e SAMBA_EMAIL="your-email@example.com" \
+  -e SAMBA_PASSWORD="your-password" \
+  -e LOCAL_API_KEY="your-secret-api-key" \
+  ghcr.io/caidaoli/sambanovo2api:latest
+```
+
+#### Using Docker Compose with Pre-built Image
+
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+services:
+  sambanova-proxy:
+    image: ghcr.io/caidaoli/sambanovo2api:latest
+    ports:
+      - "6666:8000"
+    environment:
+      - SAMBA_EMAIL=${SAMBA_EMAIL}
+      - SAMBA_PASSWORD=${SAMBA_PASSWORD}
+      - LOCAL_API_KEY=${LOCAL_API_KEY}
+    restart: unless-stopped
+```
+
+Then run:
+
+```bash
+docker-compose up -d
+```
+
+#### Building from Source
 
 ```bash
 # Build image
@@ -46,7 +88,7 @@ docker build -t sambanova-proxy .
 # Run container
 docker run -d \
   --name sambanova-proxy \
-  -p 6666:6666 \
+  -p 6666:8000 \
   --env-file .env \
   sambanova-proxy
 ```

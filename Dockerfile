@@ -7,11 +7,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装系统依赖
+# 安装系统依赖 (支持多架构构建)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # 安装Python依赖
 COPY requirement.txt .
@@ -39,9 +41,18 @@ COPY --from=dependencies /usr/local/bin /usr/local/bin
 # 复制应用代码并设置权限
 COPY --chown=appuser:appgroup app.py .
 
+# 添加健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+
 # 切换到非root用户
 USER appuser
 
+# 设置时区
 ENV TZ=Asia/Shanghai
+
+# 暴露端口
+EXPOSE 8000
+
 # 使用hypercorn启动应用以获得更好的性能
 CMD ["python", "app.py"] 

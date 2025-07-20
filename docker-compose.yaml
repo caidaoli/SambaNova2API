@@ -2,16 +2,21 @@ version: '3.8'
 
 services:
   sambanova_proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      # 启用BuildKit以获得更好的构建性能
-      target: production
+    # Use pre-built image from GHCR.io (recommended)
+    image: ghcr.io/caidaoli/sambanovo2api:latest
+    
+    # Alternative: Build from source
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   target: production
+    
     ports:
-      - "8004:7860"
+      - "8000:8000"  # Updated to match the app's default port
     env_file:
       - .env
-    # 性能优化配置
+    
+    # Performance optimization
     deploy:
       resources:
         limits:
@@ -20,14 +25,21 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
-    # 健康检查
+    
+    # Health check
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:7860/info', timeout=5)"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    
     restart: unless-stopped
+    
+    # Environment variables (can override .env file)
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
     # 日志配置优化
     logging:
       driver: "json-file"
