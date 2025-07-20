@@ -42,12 +42,6 @@ COPY --chown=appuser:appgroup app.py .
 # 切换到非root用户
 USER appuser
 
-# 暴露端口
-EXPOSE 7860
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:7860/info', timeout=5)" || exit 1
-
+ENV TZ=Asia/Shanghai
 # 使用hypercorn启动应用以获得更好的性能
 CMD ["python", "app.py"] 
