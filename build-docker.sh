@@ -7,7 +7,7 @@ set -e
 
 # 配置变量
 REGISTRY="ghcr.io"
-REPOSITORY="caidaoli/sambanovo2api"  # 根据您的GitHub用户名和仓库名调整
+REPOSITORY="caidaoli/sambanova2api"  # GitHub会自动将仓库名转换为小写
 IMAGE_NAME="$REGISTRY/$REPOSITORY"
 VERSION="local-test"
 

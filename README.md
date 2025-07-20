@@ -43,7 +43,7 @@ Pull and run the latest image from GitHub Container Registry:
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/caidaoli/sambanovo2api:latest
+docker pull ghcr.io/caidaoli/sambanova2api:latest
 
 # Run with environment variables
 docker run -d \
@@ -52,7 +52,7 @@ docker run -d \
   -e SAMBA_EMAIL="your-email@example.com" \
   -e SAMBA_PASSWORD="your-password" \
   -e LOCAL_API_KEY="your-secret-api-key" \
-  ghcr.io/caidaoli/sambanovo2api:latest
+  ghcr.io/caidaoli/sambanova2api:latest
 ```
 
 #### Using Docker Compose with Pre-built Image
@@ -63,7 +63,7 @@ Create a `docker-compose.yml` file:
 version: '3.8'
 services:
   sambanova-proxy:
-    image: ghcr.io/caidaoli/sambanovo2api:latest
+    image: ghcr.io/caidaoli/sambanova2api:latest
     ports:
       - "6666:8000"
     environment:

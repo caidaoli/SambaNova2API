@@ -15,9 +15,9 @@
 
 ### 构建的镜像标签
 
-- `ghcr.io/caidaoli/sambanovo2api:latest` - 最新主分支版本
-- `ghcr.io/caidaoli/sambanovo2api:main` - 主分支版本
-- `ghcr.io/caidaoli/sambanovo2api:v1.0.0` - 版本标签 (如果推送Git标签)
+- `ghcr.io/caidaoli/sambanova2api:latest` - 最新主分支版本
+- `ghcr.io/caidaoli/sambanova2api:main` - 主分支版本
+- `ghcr.io/caidaoli/sambanova2api:v1.0.0` - 版本标签 (如果推送Git标签)
 
 ## 📦 使用已构建的镜像
 
@@ -31,7 +31,7 @@ docker run -d \
   -e SAMBA_EMAIL="your-email@example.com" \
   -e SAMBA_PASSWORD="your-password" \
   -e LOCAL_API_KEY="your-secret-key" \
-  ghcr.io/caidaoli/sambanovo2api:latest
+  ghcr.io/caidaoli/sambanova2api:latest
 ```
 
 ### 使用Docker Compose
@@ -43,7 +43,7 @@ version: '3.8'
 
 services:
   sambanova-api:
-    image: ghcr.io/caidaoli/sambanovo2api:latest
+    image: ghcr.io/caidaoli/sambanova2api:latest
     container_name: sambanova-api
     ports:
       - "8000:8000"
@@ -87,7 +87,7 @@ spec:
     spec:
       containers:
       - name: sambanova-api
-        image: ghcr.io/caidaoli/sambanovo2api:latest
+        image: ghcr.io/caidaoli/sambanova2api:latest
         ports:
         - containerPort: 8000
         env:

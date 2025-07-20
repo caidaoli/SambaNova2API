@@ -3,7 +3,7 @@ version: '3.8'
 services:
   sambanova_proxy:
     # Use pre-built image from GHCR.io (recommended)
-    image: ghcr.io/caidaoli/sambanovo2api:latest
+    image: ghcr.io/caidaoli/sambanova2api:latest
     
     # Alternative: Build from source
     # build:
