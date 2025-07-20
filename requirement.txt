@@ -1,6 +1,6 @@
 fastapi>=0.115.0
 httpx[http2,socks]>=0.28.0
-uvicorn[standard]>=0.32.0
+hypercorn>=0.17.0
 fake_useragent>=1.5.0
 python-dotenv>=1.0.1
 pydantic>=2.10.0

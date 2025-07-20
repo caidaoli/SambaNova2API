@@ -49,5 +49,5 @@ EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:7860/info', timeout=5)" || exit 1
 
-# 使用uvicorn启动应用以获得更好的性能
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1", "--loop", "asyncio"] 
+# 使用hypercorn启动应用以获得更好的性能
+CMD ["python", "app.py"] 
