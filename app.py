@@ -1,7 +1,3 @@
-"""
-SambaNova OpenAI 接口代理 (支持模型列表透传和自动登录)
-"""
-
 import os
 import uuid
 import json
