@@ -676,7 +676,7 @@ if __name__ == "__main__":
     from hypercorn.config import Config
     
     config = Config()
-    config.bind = ["0.0.0.0:7860"]
+    config.bind = ["0.0.0.0:6666"]
     config.use_reloader = False
     config.access_log_format = "%(h)s %(l)s %(u)s %(t)s '%(r)s' %(s)s %(b)s '%(f)s' '%(a)s'"
     
