@@ -1,5 +1,5 @@
 # 多阶段构建：依赖阶段
-FROM python:3.11-slim as dependencies
+FROM python:3.13-slim as dependencies
 
 # 设置环境变量优化Python执行
 ENV PYTHONUNBUFFERED=1 \
@@ -18,7 +18,7 @@ COPY requirement.txt .
 RUN pip install --no-cache-dir -r requirement.txt
 
 # 生产阶段
-FROM python:3.11-slim as production
+FROM python:3.13-slim as production
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1 \
@@ -33,7 +33,7 @@ RUN addgroup --system --gid 1001 appgroup && \
 WORKDIR /app
 
 # 从依赖阶段复制已安装的包
-COPY --from=dependencies /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=dependencies /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=dependencies /usr/local/bin /usr/local/bin
 
 # 复制应用代码并设置权限
