@@ -1,5 +1,5 @@
 ---
-title: SambaNova2API
+title: samba nova
 emoji: 🏃
 colorFrom: blue
 colorTo: blue

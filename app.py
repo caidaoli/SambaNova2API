@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fake_useragent import UserAgent
+from functools import lru_cache
 # 修复 Pydantic 导入
 try:
     # 尝试从 pydantic-settings 导入 (Pydantic v2)
@@ -56,19 +57,35 @@ settings = Settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    应用生命周期管理器：在应用启动时启动后台令牌刷新任务。
+    应用生命周期管理器：在应用启动时启动后台令牌刷新任务和全局客户端。
     """
+    global global_client
+    
     # 应用启动时执行
+    print("[生命周期] 初始化全局HTTP客户端...")
+    global_client = httpx.AsyncClient(
+        limits=CONNECTION_LIMITS,
+        timeout=CLIENT_TIMEOUT,
+        http2=True
+    )
+    
     task = asyncio.create_task(token_refresh_task())
     print("[生命周期] 应用启动，开始后台令牌刷新任务...")
+    
     yield
-    # 应用关闭时执行 (如果需要)
+    
+    # 应用关闭时执行
     print("[生命周期] 应用关闭，正在取消后台任务...")
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         print("[生命周期] 后台任务成功取消。")
+    
+    # 关闭全局客户端
+    if global_client:
+        await global_client.aclose()
+        print("[生命周期] 全局HTTP客户端已关闭。")
 
 
 app = FastAPI(title="SambaNova OpenAI Proxy with Auto-Login", lifespan=lifespan)
@@ -79,9 +96,30 @@ access_token = None
 token_expiry = 0
 token_lock = asyncio.Lock()
 
+# 全局HTTP客户端，复用连接
+global_client = None
+
+# 连接池配置
+CONNECTION_LIMITS = httpx.Limits(
+    max_keepalive_connections=10,
+    max_connections=50,
+    keepalive_expiry=30
+)
+
+CLIENT_TIMEOUT = httpx.Timeout(
+    timeout=300.0,  # 减少到5分钟
+    connect=10.0,
+    read=60.0
+)
+
+@lru_cache(maxsize=1000)
+def generate_fingerprint_cached(prefix: str) -> str:
+    """生成缓存的随机指纹，减少重复生成开销"""
+    return f"{prefix}{uuid.uuid4().hex[:20]}"
+
 def generate_fingerprint() -> str:
     """生成符合格式要求的随机指纹"""
-    return f"{settings.FINGERPRINT_PREFIX}{uuid.uuid4().hex[:20]}"
+    return generate_fingerprint_cached(settings.FINGERPRINT_PREFIX)
 
 async def validate_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """验证本地API密钥并返回SambaNova访问令牌"""
@@ -153,10 +191,10 @@ def reset_token_expiry():
     print("[令牌] 令牌已过期，将在下次请求时重新获取")
 
 async def forward_get_request(url: str, token: str) -> httpx.Response:
-    """转发 GET 请求到目标接口"""
+    """转发 GET 请求到目标接口，使用全局客户端"""
     headers = {
         "accept": "application/json",
-        "user-agent": "SambaNova-Proxy/1.0",
+        "user-agent": "SambaNova-Proxy/2.0-Optimized",
         "origin": "https://cloud.sambanova.ai",
         "referer": "https://cloud.sambanova.ai/"
     }
@@ -165,29 +203,27 @@ async def forward_get_request(url: str, token: str) -> httpx.Response:
         "access_token": token
     }
     
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.get(
-                url,
-                headers=headers,
-                cookies=cookies,
-                timeout=600.0
-            )
+    try:
+        resp = await global_client.get(
+            url,
+            headers=headers,
+            cookies=cookies
+        )
+        
+        # 检查是否需要刷新令牌
+        if resp.status_code == 401:
+            # 令牌已过期，需要刷新
+            reset_token_expiry()
+            raise HTTPException(401, "Token expired, please retry")
             
-            # 检查是否需要刷新令牌
-            if resp.status_code == 401:
-                # 令牌已过期，需要刷新
-                reset_token_expiry()
-                raise HTTPException(401, "Token expired, please retry")
-                
-            resp.raise_for_status()
-            return resp
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                # 令牌已过期，需要刷新
-                reset_token_expiry()
-                raise HTTPException(401, "Token expired, please retry")
-            raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text}")
+        resp.raise_for_status()
+        return resp
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            # 令牌已过期，需要刷新
+            reset_token_expiry()
+            raise HTTPException(401, "Token expired, please retry")
+        raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text}")
 
 @app.get("/v1/models")
 async def list_models(token: str = Depends(validate_api_key)):
@@ -245,11 +281,9 @@ async def chat_completions(
     }
     cookies = {"access_token": token}
 
-    client = httpx.AsyncClient(timeout=600.0)
-    
     try:
-        req = client.build_request("POST", settings.SAMBA_COMPLETION_URL, json=samba_payload, headers=headers, cookies=cookies)
-        resp = await client.send(req, stream=True)
+        req = global_client.build_request("POST", settings.SAMBA_COMPLETION_URL, json=samba_payload, headers=headers, cookies=cookies)
+        resp = await global_client.send(req, stream=True)
 
         if resp.status_code == 401:
             reset_token_expiry()
@@ -263,16 +297,15 @@ async def chat_completions(
             print("[模式] 客户端请求流式响应，直接代理。")
             media_type = resp.headers.get("content-type", "text/event-stream")
 
-            async def content_streamer(response, http_client):
+            async def content_streamer(response):
                 try:
                     async for chunk in response.aiter_bytes():
                         yield chunk
                 finally:
                     await response.aclose()
-                    await http_client.aclose()
                     print("[流关闭] 上游连接已关闭。")
             
-            return StreamingResponse(content_streamer(resp, client), status_code=resp.status_code, media_type=media_type, headers={"X-Proxy-Version": "1.4-FixNonStream"})
+            return StreamingResponse(content_streamer(resp), status_code=resp.status_code, media_type=media_type, headers={"X-Proxy-Version": "2.0-Optimized"})
         else:
             print("[模式] 客户端请求非流式响应，聚合结果。")
             full_text = ""
@@ -297,8 +330,7 @@ async def chat_completions(
                                 print(f"[警告] 无法解析聚合流中的JSON行: {line}")
             finally:
                 await resp.aclose()
-                await client.aclose()
-                print("[连接清理] 非流式请求处理完毕，连接已关闭。")
+                print("[连接清理] 非流式请求处理完毕。")
 
             openai_response = {
                 "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
@@ -311,12 +343,10 @@ async def chat_completions(
     except httpx.HTTPStatusError as e:
         print(f"[错误] 上游HTTP状态错误: {e}")
         if 'resp' in locals() and resp and not resp.is_closed: await resp.aclose()
-        if client and not client.is_closed: await client.aclose()
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         print(f"[错误] 未处理异常: {e}")
         if 'resp' in locals() and resp and not resp.is_closed: await resp.aclose()
-        if client and not client.is_closed: await client.aclose()
         raise HTTPException(500, f"Internal server error: {str(e)}")
 
 @app.get("/info")
@@ -488,7 +518,11 @@ class SambaAuthAsync:
     def __init__(self, email, password):
         self.email = email
         self.password = password
-        self.client = httpx.AsyncClient()
+        # 使用优化的客户端配置
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_connections=5)
+        )
         self.ua = UserAgent()
         self.base_headers = {
             "accept": "*/*",
@@ -624,9 +658,9 @@ async def token_refresh_task():
             print("[后台任务] 令牌已过期，立即刷新")
             await get_samba_token()
         else:
-            # 设置为过期前3分钟刷新
-            refresh_before = min(remaining_time - 180, 3600)  # 提前3分钟，但最长等待1小时
-            refresh_before = max(refresh_before, 0)  # 确保不会是负数
+            # 设置为过期前5分钟刷新，优化刷新频率
+            refresh_before = min(remaining_time - 300, 1800)  # 提前5分钟，但最长等待30分钟
+            refresh_before = max(refresh_before, 60)  # 最少等待1分钟
             
             print(f"[后台任务] 令牌将在 {int(remaining_time)} 秒后过期，计划在 {int(refresh_before)} 秒后刷新")
             await asyncio.sleep(refresh_before)
