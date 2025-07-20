@@ -1,4 +1,4 @@
-name: Build and Push Docker Image to GHCR
+name: Build and Push Docker Image to GHCR (Simple)
 
 on:
   push:
@@ -23,8 +23,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
 
     steps:
       - name: Checkout repository
@@ -54,7 +52,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
-        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -66,10 +63,6 @@ jobs:
           cache-to: type=gha,mode=max
           target: production
 
-      - name: Generate artifact attestation
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+      - name: Image digest
+        run: |
+          echo "Image pushed successfully with tags: ${{ steps.meta.outputs.tags }}"
